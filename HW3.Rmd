@@ -1,0 +1,218 @@
+---
+title: "S610 HW3"
+author: "Shibi He"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(plyr)
+library(dplyr)
+library(tibble)
+library(reshape)
+#rm(list=ls())
+```
+
+
+
+
+
+
+## 1. Read in the data
+```{r}
+votes <- read.csv("votes.csv", row.names = 1, stringsAsFactors = FALSE)
+bills <- read.csv("bills.csv", stringsAsFactors = FALSE)
+members <- read.csv("members.csv", row.names = 1, stringsAsFactors = FALSE)
+```
+
+
+
+## 2. Create the measure of activity level
+
+```{r}
+# a=c("ac", "bay", "cb", "cr","abc")
+# b=c("ac", "b", "d")
+# k=rep(0, 3)
+# for (j in 1:length(b)){
+#     for (i in 1: length(a)){
+#         if (str_detect(a[i], b[j])){
+#         k[j]=k[j]+1
+#         }
+#     }
+# }
+# print(k)
+```
+
+
+```{r}
+Nmember <- length(members$last_name)
+k <- rep(0, Nmember)
+
+for (j in 1: Nmember){
+    for (i in 1: length(bills$subject)){
+        if (str_detect(bills$subject[i], members$last_name[j])){
+            k[j]=k[j]+1
+        }
+    }
+}
+members$ActLevel <- k
+```
+
+
+
+
+
+## 3. Find the number of "Yea" votes for each bill
+
+
+### Create a function that takes a vote vector as its argument and returns the number of "Yea" votes: 
+
+```{r}
+n=0
+count_yea = function(x){
+    for (i in 1: length(x)){
+        if (x[i] =="Yea") {
+            n=n+1
+        }
+    }
+    return(n)
+}
+```
+
+
+### Apply the function count_yea to each column of votes data. (Note: replace NA in votes data with "Null" to avoid error)
+
+
+```{r}
+# some bills vote for guilty or not guilty
+votes$s17.106.1999[votes$s17.106.1999 == "Not Guilty"] <- "Nay"
+votes$s17.106.1999[votes$s17.106.1999 == "Guilty"] <- "Yea"
+
+votes$s18.106.1999[votes$s18.106.1999 == "Not Guilty"] <- "Nay"
+votes$s18.106.1999[votes$s18.106.1999 == "Guilty"] <- "Yea"
+
+# change NA to character "Null"
+votes[is.na(votes)]="Null"
+
+YeaNumber <-apply(votes, 2, count_yea)
+bills$NYea <- YeaNumber
+```
+
+
+
+## 4. Compute number of Yea votes required for passage.
+
+### Create a function that takes the string version of the fraction required and returns the number of Yea votes required. 
+
+```{r}
+Yea_required <- function (x){
+    fraction=sapply(parse(text=x), eval)
+    Yea_required=Nmember*fraction
+    return(Yea_required)
+}
+```
+
+
+
+### Apply the Yea_required function to the "requires" column of bills data. 
+
+```{r}
+library(dplyr)
+bills$YeaReq <- ldply(bills$requires, Yea_required)
+```
+
+
+
+## 5. Compute the fraction of the time each senator's vote was alighed with the overall outcome of the bill. 
+
+
+### Determine whether a bill passed or not
+```{r}
+bills$pass <- with(bills, ifelse(NYea > YeaReq, "Yea", "Nay"))
+```
+
+
+
+### Write a function that merges two data frames and returns the fraction of alignment.
+
+
+```{r}
+# total number of bills
+
+DF1 = data.frame(vote_id=c("1", "2", "3"), pass=c("Yea", "Nay", "Yea"))
+DF2 = data.frame(vote_id=c("1", "2", "3"), vote=c("Nay", "Nay", "Yea"))
+
+DF3 = data.frame(vote_id=c("1", "2", "3","1", "2", "3"), vote=c("Yea", "Nay", "Nay", "Yea", "Yea", "Yea"), member_id=c("a", "a", "a", "b", "b", "b"))
+# df <- merge(DF1, DF2, by="vote_id")
+# a=length(df$vote_id)
+# a
+
+
+
+N= length(bills$vote_id)
+
+n=0
+alignment <- function(df1){
+    df <- merge(df1, bills, by="vote_id")
+    for (i in 1:length(df$vote_id)){
+        if (df$pass[i] == df$vote[i]){
+            n=n+1
+        }
+    }
+    k=n/N
+    return(k)
+}
+
+```
+
+
+
+
+### Transform the votes data into long form
+```{r}
+votes <- rownames_to_column(votes, "member_id") 
+
+votes.long <- gather(votes,  key="vote_id", value="vote", "s1.106.1999":"s99.106.1999")
+```
+
+
+### Apply alignment function to each member in the votes.long data
+
+```{r}
+AlignMeasure <- ddply(votes.long, .(member_id), alignment)
+names(AlignMeasure)[2] <- "Alignment"
+names(AlignMeasure)[1] <- "id"
+
+members <- merge(members, AlignMeasure, by="id")
+```
+
+
+
+
+
+## 6. Relationship between how active a member is and his/her alignment with the chamber overall.
+
+```{r}
+reg <- function(df){
+    output <- lm(Alignment ~ ActLevel, df)
+    print(output)
+}
+```
+
+
+### apply the reg function to members data, which is splited by "party"
+```{r}
+dlply(members, .(party), reg)
+```
+
+
+
+The results show that for the Democratic Party, as the activity level increases by 1, the alignment measure is expected to decrease by 0.0066. For the Republican Party, as the activity level increases by 1, the alignment measure is expected to decrease by 0.0026. 
+
+
+
+
+
