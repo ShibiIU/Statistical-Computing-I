@@ -1,0 +1,130 @@
+---
+title: "S610 HW8"
+author: "Shibi He"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### 1. Load the data
+```{r}
+doc.network = read.csv("network.csv", header = TRUE)
+names(doc.network) = NULL
+doc.network = as.matrix(doc.network) #network matrix
+attribu = read.csv("attributes.csv")
+```
+
+
+### 2. Write a function to simulate from the contagion model
+```{r}
+set.seed(610)
+
+simulation = function(network, initial, prob, T){
+    n = dim(network)[1]  # number of nodes
+    infected_time = rep(0, n)   # infected_time = 0 means not infected yet
+    infected_time[initial] = 1  # initial nodes are infected at time 1
+    
+    for (t in 2:T){
+        for (i in initial){
+            if (rowSums(network)[i] != 0){  # exclude the case with no neighbors
+                j = sample(which(network[i, ] == 1), 1) # randomly select a neighbor
+                if (infected_time[j] == 0){ # if the neighbor is not infected
+                    if (runif(1) < prob){   # infect it with probability = prob
+                        infected_time[j] = t
+                    } else{
+                    infected_time[j] = 0
+                    }
+                }
+            }
+        }
+        initial = which(infected_time <= t & infected_time > 0 ) 
+        # update set of initial nodes each time step
+    }
+    return(infected_time)
+}
+```
+
+
+### 3. Realization of the simulation
+```{r}
+doc.initial = which(attribu$adoption_date == 1)
+
+# prob = 0.1
+realization1 = simulation(doc.network, doc.initial, 0.1, 18)
+realization1
+```
+
+```{r}
+# prob = 0.5
+realization2 = simulation(doc.network, doc.initial, 0.5, 18)
+realization2
+```
+
+```{r}
+# prob = 0.9
+realization3 = simulation(doc.network, doc.initial, 0.9, 18)
+realization3
+```
+
+
+### 4. ABC
+```{r}
+generate_abc_sample = function(network_data, 
+                               infect_time_data,
+                               prior_distribution, 
+                               data_generating_function, 
+                               N, epsilon){
+    initial = which(infect_time_data == 1)
+    p = rep(0, N)
+    distance = rep(0, N)
+    
+    for (i in 1:N){
+        p[i] = prior_distribution()
+        y = data_generating_function(network_data, initial, p[i], 18)
+        distance[i] = sqrt(sum((y-infect_time_data)^2))
+    }
+    p=p[order(distance)][1:(N*epsilon)]
+    return(p)
+}
+```
+
+
+
+```{r}
+prior_distribution = function() runif(1)  
+```
+
+
+
+```{r}
+infect_time = attribu$adoption_date
+```
+
+
+```{r}
+posterior_sample = generate_abc_sample(doc.network, 
+                                       infect_time,
+                                       prior_distribution,
+                                       data_generating_function = simulation, 
+                                       1000, 0.05)
+```
+
+```{r}
+posterior_sample
+```
+
+### 5. plot the histogram
+
+```{r}
+hist(posterior_sample, breaks = seq(0, 1, by = 0.02))
+mean(posterior_sample)
+quantile(posterior_sample, probs = c(0.025, 0.975))
+```
+
+
+
+
