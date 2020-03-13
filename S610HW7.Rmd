@@ -1,0 +1,197 @@
+---
+title: "S610 HW7"
+author: Shibi He
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+```
+
+## 1. Load the data
+```{r}
+sample = read.csv("hw7.csv")
+# View(sample)
+sample=sample[, -1]
+```
+
+
+## 2. Solve the minimization problem 
+```{r}
+library(CVXR)
+lambda=0.5
+S=var(sample)
+
+theta = Variable(10,10)
+objective = Minimize(-log_det(theta) + matrix_trace(S %*% theta) + lambda * sum(abs(theta)))
+problem = Problem(objective)
+result = solve(problem)
+
+round(result$getValue(theta), digits = 2)
+
+```
+
+
+
+## 3. Plot the estimates for a variety of lambda
+```{r}
+lambda_search = 10^(seq(-2, 2, length.out = 40))
+
+get_theta_hat = function(lambda, data) {
+     S=var(data)
+     objective = Minimize(-log_det(theta) + matrix_trace(S %*% theta) + lambda * sum(abs(theta)))
+    problem = Problem(objective)
+    result = solve(problem)
+    result$getValue(theta)
+}
+
+theta_hats = plyr::aaply(lambda_search, 1, get_theta_hat, sample)
+
+theta_hats=data.frame(lambda=lambda_search, theta_hats)
+```
+
+
+
+```{r}
+# Choose a subset of the elements in theta_hats
+elements = theta_hats[, c(1, 3, 5, 7, 10, 24, 39, 55, 67, 82, 95)]
+
+# Plot the elements for different values of lambda
+elements_melted = reshape2::melt(data.frame(elements), id.vars = "lambda", value.name = "vcov")
+ggplot(elements_melted) +
+    geom_line(aes(x = lambda, y = vcov, color = variable, lty = variable)) +
+    scale_x_log10()
+```
+
+
+## 4. Choose the value of lambda by cross validation
+
+```{r}
+# Create 10 equally size folds
+folds = cut(seq(1, nrow(sample)), breaks=10, labels=FALSE)
+L=numeric(length(unique(folds)))
+
+
+# Perform 10-fold cross validation
+loglik_on_hold_out = function(lambda, testData, trainData){
+  theta_on_trainData = get_theta_hat(lambda, trainData)
+  S_on_testData = var(testData)
+  L= -log(det(theta_on_trainData)) + sum(diag((S_on_testData %*% theta_on_trainData)))
+  return(L)
+}
+
+
+overall_loglik = function(lambda, data){
+  for(i in 1:10){
+    L[i]=loglik_on_hold_out(lambda, testData = data[folds==i, ],
+                          trainData = data[folds!=i, ])
+  }
+  overall_loglik = sum(L)
+  return(overall_loglik)
+}
+```
+
+
+Based on the graph in Q3, it seems like when lambda is close to zero, we have a inverse covariance matrix with only a few zeros, and when lambda gets to one, the matrix has nearly all zeros. So I search over a range between 0 and 1. 
+
+
+```{r}
+# Search over a range of lambda
+lambda_search = seq(0, 1, 0.02)
+overall.loglik = plyr::aaply(lambda_search, 1, overall_loglik, sample)
+```
+
+
+
+```{r}
+# plot overall negative log liklihood against lambda
+df=data.frame(lambda=lambda_search, loglik=overall.loglik)
+ggplot(df) +
+    geom_line(aes(x = lambda, y = loglik))
+```
+
+
+When lambda=0, we have the smallest held out negative log likelihood value. 
+
+
+
+
+## 5. Estimate theta with constraints
+```{r}
+get_theta = function(data) {
+     theta = Variable(10,10)
+     S=var(data)
+     constraints = list(theta[2, 3:9] == 0,
+                   theta[3, c(2, 4:9)] == 0,
+                   theta[4, c(2:3, 5:9)] == 0, 
+                   theta[5, c(2:4, 6:9)] == 0,
+                   theta[6, c(2:5, 7:9)] == 0,
+                   theta[7, c(2:6, 8:9)] == 0,
+                   theta[8, c(2:7, 9)] == 0,
+                   theta[9, 2:8] == 0)
+     objective = Minimize(-log_det(theta) + matrix_trace(S %*% theta))
+     problem = Problem(objective, constraints)
+     result = solve(problem)
+     return(round(result$getValue(theta), digits = 2))
+}
+
+
+
+
+get_theta(sample)
+```
+
+
+
+
+## 6. Obtain bootstrap confidence intervals
+
+```{r}
+bootstrap_theta_ci = function(data, alpha, B) {
+    boot_theta = get_boot_theta(data, B)
+    boot_ci = apply(boot_theta, 1, get_ci, alpha)
+    return(boot_ci)
+}
+
+
+get_boot_theta = function(data, B) {
+    n = dim(data)[1]
+    get_boot_data = replicate(B, {
+        boot_indices = sample(x = 1:n, size = n, replace = TRUE)
+        boot_data = data.matrix(data[boot_indices, ])
+        })
+    theta_hats = apply(get_boot_data, 3, get_theta)
+    return(theta_hats)
+}
+
+
+
+
+get_ci = function(x, alpha){
+    q_lo = alpha / 2
+    q_hi = 1 - (alpha / 2)
+    ci = quantile(x, probs = c(q_lo, q_hi))
+    return(ci)
+}
+
+```
+
+
+
+```{r}
+theta_ci = bootstrap_theta_ci(sample, 0.05, 100)
+theta_ci
+```
+
+
+The above table shows the 0.025 and 0.975 quantiles of $\Theta_{ij}^{(b)}$ for each $(i,j)$ pair. For the zero elements of $\Theta$, these quantiles are zero. 
+
+
+
+
+
+
